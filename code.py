@@ -52,7 +52,8 @@ if submit and uploaded_files:
 
         all_names.append(response.text)
         x += 1
-
+    all_names.sort(key=str.lower)
+    
     st.write("Students who submitted")
     for names in all_names:
         st.write(names)
