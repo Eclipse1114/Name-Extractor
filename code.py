@@ -45,7 +45,7 @@ if submit and uploaded_files:
                 Find the student's own name written on the assignment.
                 Ignore all other names that may appear in the image.
 
-                Return ONLY the student's name.
+                Return the student's name. If there is more than one return them all.
                 If you cannot confidently identify the student's name, return UNKNOWN.
 
                 Do not grade the assignment.
