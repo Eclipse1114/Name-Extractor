@@ -40,9 +40,14 @@ if submit and uploaded_files:
             contents=[
                 image,
                 """
-                Extract the names of the students visible in this image.
+                Identify the student who submitted this assignment.
 
-                Return ONLY the names.
+                Find the student's own name written on the assignment.
+                Ignore all other names that may appear in the image.
+
+                Return ONLY the student's name.
+                If you cannot confidently identify the student's name, return UNKNOWN.
+
                 Do not grade the assignment.
                 Do not provide feedback.
                 Do not explain anything.
