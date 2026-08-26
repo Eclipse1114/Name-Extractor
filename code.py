@@ -3,13 +3,12 @@ from google import genai
 from google.genai import types
 from PIL import Image
 
-
+st.write("Please make sure you always take a clear picture, with the name visable!")
 uploaded_files = st.file_uploader(
     "Upload assignment images",
     type=["png", "jpg", "jpeg"],
     accept_multiple_files=True
 )
-
 submit = st.button("Extract Names")
 
 
