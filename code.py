@@ -4,6 +4,29 @@ from google.genai import types
 from PIL import Image
 import json
 import io
+import os
+import sys
+import subprocess
+
+
+def ensure_playwright_browser():
+    browser_path = os.path.expanduser("~/.cache/ms-playwright")
+
+    if not os.path.exists(browser_path) or not os.listdir(browser_path):
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "playwright",
+                "install",
+                "--only-shell",
+                "chromium"
+            ],
+            check=True
+        )
+
+
+ensure_playwright_browser()
 
 
 st.write("Please make sure you always take a clear picture, with the name visible!")
