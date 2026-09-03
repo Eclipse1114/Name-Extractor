@@ -4,33 +4,21 @@ from google.genai import types
 from PIL import Image
 import json
 import io
-import os
-import sys
-import subprocess
 
 
-def ensure_playwright_browser():
-    browser_path = os.path.expanduser("~/.cache/ms-playwright")
+# ============================================================
+# PAGE
+# ============================================================
 
-    if not os.path.exists(browser_path) or not os.listdir(browser_path):
-        subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "playwright",
-                "install",
-                "--only-shell",
-                "chromium"
-            ],
-            check=True
-        )
+st.write(
+    "Please make sure you always take a clear picture, "
+    "with the student's name visible!"
+)
 
 
-ensure_playwright_browser()
-
-
-st.write("Please make sure you always take a clear picture, with the name visible!")
-
+# ============================================================
+# FILE UPLOAD
+# ============================================================
 
 uploaded_files = st.file_uploader(
     "Upload assignment images",
@@ -41,17 +29,28 @@ uploaded_files = st.file_uploader(
 submit = st.button("Extract Names")
 
 
+# ============================================================
+# GEMINI CLIENT
+# ============================================================
+
 @st.cache_resource
 def get_gemini_client():
-    return genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    return genai.Client(
+        api_key=st.secrets["GEMINI_API_KEY"]
+    )
 
 
 try:
     client = get_gemini_client()
+
 except Exception as e:
     st.error(f"Error initializing Gemini client: {e}")
     st.stop()
 
+
+# ============================================================
+# PROCESS ASSIGNMENTS
+# ============================================================
 
 if submit and uploaded_files:
 
@@ -63,36 +62,74 @@ if submit and uploaded_files:
     total = len(uploaded_files)
 
 
+    # --------------------------------------------------------
+    # PROCESS EACH IMAGE
+    # --------------------------------------------------------
+
     for index, uploaded_file in enumerate(uploaded_files, start=1):
 
         st.write(f"File {index} of {total}")
 
         image_bytes = uploaded_file.getvalue()
 
-        image = Image.open(io.BytesIO(image_bytes))
+        try:
+            image = Image.open(
+                io.BytesIO(image_bytes)
+            )
 
+        except Exception as e:
+
+            review_names.append({
+                "name": f"Could not open image: {e}",
+                "confidence": 0,
+                "image": image_bytes
+            })
+
+            continue
+
+
+        # ----------------------------------------------------
+        # AI PROMPT
+        # ----------------------------------------------------
 
         prompt = """
-        Identify the student who submitted this assignment.
+Identify the student's name on this assignment.
 
-        Return ONLY valid JSON.
-        Do not use markdown.
-        Do not include explanations.
+The student's name must actually be visible in the image.
+Do not guess or infer a name.
 
-        The JSON must have exactly these fields:
+Ignore:
+- Teacher names
+- Teacher comments
+- Names appearing in the assignment questions
+- Names in examples
+- Names belonging to other people
 
-        {
-            "name": "student name",
-            "confidence": 0.0
-        }
+Do not grade the assignment.
+Do not provide feedback.
 
-        Confidence must be a number between 0 and 1.
+Return ONLY valid JSON.
+Do not use markdown.
+Do not include explanations.
 
-        Ignore teacher names, comments, and other names.
-        Do not grade the assignment.
-        Do not provide feedback.
-        """
+The JSON must contain exactly these fields:
 
+{
+    "name": "student name",
+    "confidence": 0.0
+}
+
+Rules for confidence:
+- confidence must be a number between 0 and 1
+- use a high confidence only when the student's name is clearly visible
+- use a low confidence when the name is unclear, partially visible, or uncertain
+- if no student name can be found, return an empty string for name and a confidence of 0
+"""
+
+
+        # ----------------------------------------------------
+        # SEND TO GEMINI
+        # ----------------------------------------------------
 
         try:
 
@@ -108,24 +145,66 @@ if submit and uploaded_files:
             )
 
 
-            data = json.loads(gemini_response.text)
+            # ------------------------------------------------
+            # PARSE JSON
+            # ------------------------------------------------
 
-            name = data["name"]
-            confidence = data["confidence"]
+            data = json.loads(
+                gemini_response.text
+            )
 
+
+            # ------------------------------------------------
+            # VALIDATE RESPONSE
+            # ------------------------------------------------
+
+            name = data.get("name")
+            confidence = data.get("confidence")
+
+
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError(
+                    "AI did not return a valid student name."
+                )
+
+
+            if not isinstance(confidence, (int, float)):
+                raise ValueError(
+                    "AI did not return a numeric confidence."
+                )
+
+
+            confidence = float(confidence)
+
+            # Keep confidence safely between 0 and 1
+            confidence = max(
+                0.0,
+                min(1.0, confidence)
+            )
+
+
+            # ------------------------------------------------
+            # SORT INTO VERIFIED / REVIEW
+            # ------------------------------------------------
 
             if confidence >= 0.85:
 
-                verified_names.append(name)
+                verified_names.append(
+                    name.strip()
+                )
 
             else:
 
                 review_names.append({
-                    "name": name,
+                    "name": name.strip(),
                     "confidence": confidence,
                     "image": image_bytes
                 })
 
+
+        # ----------------------------------------------------
+        # INVALID JSON
+        # ----------------------------------------------------
 
         except json.JSONDecodeError:
 
@@ -136,6 +215,10 @@ if submit and uploaded_files:
             })
 
 
+        # ----------------------------------------------------
+        # OTHER ERROR
+        # ----------------------------------------------------
+
         except Exception as e:
 
             review_names.append({
@@ -145,31 +228,50 @@ if submit and uploaded_files:
             })
 
 
-    verified_names.sort(key=str.lower)
+    # ========================================================
+    # SORT VERIFIED NAMES
+    # ========================================================
 
+    verified_names.sort(
+        key=str.lower
+    )
+
+
+    # ========================================================
+    # VERIFIED STUDENTS
+    # ========================================================
 
     st.divider()
 
     st.subheader("✅ Verified Students")
 
     if verified_names:
+
         for name in verified_names:
             st.success(name)
+
     else:
-        st.write("No automatically verified names.")
+
+        st.write(
+            "No automatically verified names."
+        )
 
 
+    # ========================================================
+    # NEEDS REVIEW
+    # ========================================================
 
     st.divider()
 
     st.subheader("⚠️ Needs Review")
 
-
     if review_names:
 
-        for index, student in enumerate(review_names):
+        for student in review_names:
 
-            st.image(student["image"])
+            st.image(
+                student["image"]
+            )
 
             st.write(
                 f"AI suggestion: **{student['name']}**"
@@ -179,15 +281,8 @@ if submit and uploaded_files:
                 f"Confidence: {student['confidence']:.0%}"
             )
 
-
-            if st.button(
-                f"Accept {student['name']}",
-                key=f"accept_{index}"
-            ):
-                verified_names.append(student["name"])
-                st.success(
-                    f"Added {student['name']}"
-                )
-
     else:
-        st.write("Nothing needs review.")
+
+        st.write(
+            "No assignments need manual review."
+        )
