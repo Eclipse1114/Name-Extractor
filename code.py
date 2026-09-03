@@ -4,6 +4,7 @@ from google.genai import types
 from PIL import Image
 import json
 import io
+import time
 
 
 # ============================================================
@@ -72,7 +73,13 @@ if submit and uploaded_files:
 
         image_bytes = uploaded_file.getvalue()
 
+
+        # ----------------------------------------------------
+        # OPEN IMAGE
+        # ----------------------------------------------------
+
         try:
+
             image = Image.open(
                 io.BytesIO(image_bytes)
             )
@@ -128,26 +135,88 @@ Rules for confidence:
 
 
         # ----------------------------------------------------
-        # SEND TO GEMINI
+        # GEMINI REQUEST WITH RETRIES
+        # ----------------------------------------------------
+
+        max_attempts = 3
+        gemini_response = None
+        last_error = None
+
+
+        for attempt in range(1, max_attempts + 1):
+
+            try:
+
+                gemini_response = client.models.generate_content(
+                    model="gemini-3.5-flash",
+                    contents=[
+                        image,
+                        prompt
+                    ],
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json"
+                    )
+                )
+
+                # Request succeeded, so stop retrying
+                break
+
+
+            except Exception as e:
+
+                last_error = e
+
+                error_text = str(e)
+
+
+                # Only retry temporary/unavailable errors
+                if "503" in error_text or "UNAVAILABLE" in error_text:
+
+                    if attempt < max_attempts:
+
+                        wait_time = attempt * 2
+
+                        st.warning(
+                            f"Gemini is temporarily busy for File "
+                            f"{index}. Retrying in {wait_time} seconds "
+                            f"(attempt {attempt + 1}/{max_attempts})..."
+                        )
+
+                        time.sleep(wait_time)
+
+                    else:
+
+                        st.error(
+                            f"Gemini was unavailable after "
+                            f"{max_attempts} attempts."
+                        )
+
+                else:
+
+                    # Don't retry permanent-looking errors
+                    break
+
+
+        # ----------------------------------------------------
+        # IF ALL ATTEMPTS FAILED
+        # ----------------------------------------------------
+
+        if gemini_response is None:
+
+            review_names.append({
+                "name": f"Error: {last_error}",
+                "confidence": 0,
+                "image": image_bytes
+            })
+
+            continue
+
+
+        # ----------------------------------------------------
+        # PARSE AI RESPONSE
         # ----------------------------------------------------
 
         try:
-
-            gemini_response = client.models.generate_content(
-                model="gemini-3.5-flash",
-                contents=[
-                    image,
-                    prompt
-                ],
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
-                )
-            )
-
-
-            # ------------------------------------------------
-            # PARSE JSON
-            # ------------------------------------------------
 
             data = json.loads(
                 gemini_response.text
@@ -163,12 +232,17 @@ Rules for confidence:
 
 
             if not isinstance(name, str) or not name.strip():
+
                 raise ValueError(
                     "AI did not return a valid student name."
                 )
 
 
-            if not isinstance(confidence, (int, float)):
+            if not isinstance(
+                confidence,
+                (int, float)
+            ):
+
                 raise ValueError(
                     "AI did not return a numeric confidence."
                 )
@@ -176,7 +250,8 @@ Rules for confidence:
 
             confidence = float(confidence)
 
-            # Keep confidence safely between 0 and 1
+
+            # Keep confidence between 0 and 1
             confidence = max(
                 0.0,
                 min(1.0, confidence)
@@ -184,7 +259,7 @@ Rules for confidence:
 
 
             # ------------------------------------------------
-            # SORT INTO VERIFIED / REVIEW
+            # VERIFIED OR NEEDS REVIEW
             # ------------------------------------------------
 
             if confidence >= 0.85:
@@ -216,7 +291,7 @@ Rules for confidence:
 
 
         # ----------------------------------------------------
-        # OTHER ERROR
+        # OTHER RESPONSE ERROR
         # ----------------------------------------------------
 
         except Exception as e:
@@ -245,9 +320,11 @@ Rules for confidence:
 
     st.subheader("✅ Verified Students")
 
+
     if verified_names:
 
         for name in verified_names:
+
             st.success(name)
 
     else:
@@ -265,6 +342,7 @@ Rules for confidence:
 
     st.subheader("⚠️ Needs Review")
 
+
     if review_names:
 
         for student in review_names:
@@ -278,7 +356,8 @@ Rules for confidence:
             )
 
             st.write(
-                f"Confidence: {student['confidence']:.0%}"
+                f"Confidence: "
+                f"{student['confidence']:.0%}"
             )
 
     else:
